@@ -368,8 +368,17 @@ def get_athlete_stats(id: int | None = None) -> dict[str, Any]:
 
     return _strava_request("GET", f"/athletes/{athlete_id}/stats")
 
-def main() -> None:
-    mcp.run()
+def main():
+    print("Creating MCP server")
+    print(f"Host={MCP_HOST}")
+    print(f"Port={MCP_PORT}")
+
+    try:
+        print("Starting MCP...")
+        mcp.run()
+    except Exception as e:
+        print("ERROR:", repr(e))
+        raise
 
 
 if __name__ == "__main__":
