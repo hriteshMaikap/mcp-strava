@@ -13,7 +13,7 @@ import httpx
 
 # Find the project root rather than relying on CWD
 # We place .strava_token.json next to pyproject.toml
-_DIR = Path(__file__).parent.parent.parent
+_DIR = Path(__file__).parents[3]
 TOKEN_PATH = _DIR / ".strava_token.json"
 
 TOKEN_URL = "https://www.strava.com/oauth/token"

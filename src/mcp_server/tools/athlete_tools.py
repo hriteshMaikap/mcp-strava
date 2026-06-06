@@ -9,8 +9,8 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
-from strava_mcp.auth import require_auth
-from strava_mcp.services import athlete_service
+from mcp_server.auth import require_auth
+from mcp_server.services import athlete_service
 
 
 def register(mcp: FastMCP) -> None:

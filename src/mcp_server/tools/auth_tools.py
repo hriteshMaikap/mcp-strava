@@ -7,7 +7,7 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
-from strava_mcp.auth import oauth_flow, token_store
+from mcp_server.auth import oauth_flow, token_store
 
 def register(mcp: FastMCP) -> None:
 

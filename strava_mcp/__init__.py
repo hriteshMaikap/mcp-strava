@@ -1,1 +1,0 @@
-"""Strava MCP package."""

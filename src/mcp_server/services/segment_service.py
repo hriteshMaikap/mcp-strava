@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from strava_mcp.api import endpoints, get, put
-from strava_mcp.models.enums import SegmentActivityType
+from mcp_server.api import endpoints, get, put
+from mcp_server.models.enums import SegmentActivityType
 
 def get_starred_segments(page: int = 1, per_page: int = 30) -> list[dict[str, Any]]:
     """List the authenticated athlete's starred segments."""

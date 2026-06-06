@@ -12,7 +12,7 @@ from typing import Any
 
 import httpx
 
-from strava_mcp.auth import token_store
+from mcp_server.auth import token_store
 
 AUTHORIZE_URL = "https://www.strava.com/oauth/authorize"
 TOKEN_URL = "https://www.strava.com/oauth/token"

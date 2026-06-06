@@ -17,7 +17,7 @@ import os
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
 
-from strava_mcp.tools import (
+from mcp_server.tools import (
     activity_tools,
     athlete_tools,
     auth_tools,

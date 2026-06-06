@@ -6,7 +6,7 @@ import functools
 import os
 from typing import Any, Callable
 
-from strava_mcp.auth import token_store
+from mcp_server.auth import token_store
 
 def require_auth(func: Callable[..., Any]) -> Callable[..., Any]:
     """Decorator to require authentication before executing a tool."""

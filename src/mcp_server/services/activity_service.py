@@ -19,43 +19,47 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from strava_mcp.api import endpoints, get
-from strava_mcp.models.enums import SortField, SortOrder, SportType
-from strava_mcp.models.responses import DetailedActivity, Lap, SplitMetric, SummaryActivity
+from mcp_server.api import endpoints, get
+from mcp_server.models.enums import SortField, SortOrder, SportType
+from mcp_server.models.responses import DetailedActivity, Lap, SplitMetric, SummaryActivity
 
 
 # ---------------------------------------------------------------------------
 # List activities
 # ---------------------------------------------------------------------------
 
-def list_activities(
-    # ---- native Strava API params ----
-    before: int | None = None,
-    after: int | None = None,
-    page: int = 1,
-    per_page: int = 30,
-    # ---- abstract params (client-side) ----
-    sport_types: list[SportType] | None = None,
-    name_contains: str | None = None,
-    min_distance_m: float | None = None,
-    max_distance_m: float | None = None,
-    min_elevation_gain: float | None = None,
-    has_heartrate: bool | None = None,
-    sort_by: SortField = SortField.DATE,
-    sort_order: SortOrder = SortOrder.DESC,
-) -> list[dict[str, Any]]:
-    """
-    Fetch a page of activities, applying both native API filters and
-    abstract client-side filters in sequence.
-    """
-    raw: list[dict[str, Any]] = get(
-        endpoints.activities_list(),
-        params={"before": before, "after": after, "page": page, "per_page": per_page},
-    )
+_API_BATCH_SIZE = 50   # activities fetched per Strava API page when auto-paginating
+_MAX_SCAN_TOTAL = 500  # hard cap: never scan more than this many raw activities
 
-    activities = [SummaryActivity.model_validate(a) for a in raw]
+def _has_client_filters(
+    sport_types: list[SportType] | None,
+    name_contains: str | None,
+    min_distance_m: float | None,
+    max_distance_m: float | None,
+    min_elevation_gain: float | None,
+    has_heartrate: bool | None,
+) -> bool:
+    """Return True if any client-side filter is active."""
+    return any([
+        sport_types,
+        name_contains is not None,
+        min_distance_m is not None,
+        max_distance_m is not None,
+        min_elevation_gain is not None,
+        has_heartrate is not None,
+    ])
 
-    # --- client-side narrowing (order: cheap checks first) ---
+
+def _apply_filters(
+    activities: list,
+    sport_types: list[SportType] | None,
+    name_contains: str | None,
+    min_distance_m: float | None,
+    max_distance_m: float | None,
+    min_elevation_gain: float | None,
+    has_heartrate: bool | None,
+) -> list:
+    """Apply all client-side filters to a list of SummaryActivity objects."""
     if sport_types:
         allowed = {st.value for st in sport_types}
         activities = [a for a in activities if a.sport_type in allowed]
@@ -75,6 +79,87 @@ def list_activities(
 
     if has_heartrate is not None:
         activities = [a for a in activities if a.has_heartrate == has_heartrate]
+
+    return activities
+
+
+def list_activities(
+    # ---- native Strava API params ----
+    before: int | None = None,
+    after: int | None = None,
+    page: int = 1,
+    per_page: int = 30,
+    # ---- abstract params (client-side) ----
+    sport_types: list[SportType] | None = None,
+    name_contains: str | None = None,
+    min_distance_m: float | None = None,
+    max_distance_m: float | None = None,
+    min_elevation_gain: float | None = None,
+    has_heartrate: bool | None = None,
+    sort_by: SortField = SortField.DATE,
+    sort_order: SortOrder = SortOrder.DESC,
+) -> list[dict[str, Any]]:
+    """
+    Fetch activities, applying both native API filters and abstract client-side
+    filters in sequence.
+
+    When client-side filters are active (e.g. sport_types), the Strava API does
+    not support them natively — it always returns all sport types. To ensure
+    `per_page` matching results are returned, the service auto-paginates through
+    the API (fetching _API_BATCH_SIZE raw activities at a time) until it has
+    collected `per_page` matching results or exhausted all available data
+    (capped at _MAX_SCAN_TOTAL raw activities to avoid excessive API usage).
+
+    When no client-side filters are active, a single API page is fetched using
+    the caller-supplied `page` and `per_page` directly (original behaviour).
+    """
+    use_autopaginate = _has_client_filters(
+        sport_types, name_contains, min_distance_m, max_distance_m,
+        min_elevation_gain, has_heartrate,
+    )
+
+    if not use_autopaginate:
+        # Fast path: no client-side filters — single API call, exact page/per_page.
+        raw: list[dict[str, Any]] = get(
+            endpoints.activities_list(),
+            params={"before": before, "after": after, "page": page, "per_page": per_page},
+        )
+        activities = [SummaryActivity.model_validate(a) for a in raw]
+    else:
+        # Auto-paginate: keep fetching until we have `per_page` matching results.
+        collected: list = []
+        scanned   = 0
+        api_page  = 1
+
+        while len(collected) < per_page and scanned < _MAX_SCAN_TOTAL:
+            batch_size = min(_API_BATCH_SIZE, _MAX_SCAN_TOTAL - scanned)
+            raw_batch: list[dict[str, Any]] = get(
+                endpoints.activities_list(),
+                params={
+                    "before":   before,
+                    "after":    after,
+                    "page":     api_page,
+                    "per_page": batch_size,
+                },
+            )
+
+            if not raw_batch:
+                break  # no more activities available
+
+            scanned += len(raw_batch)
+            batch = [SummaryActivity.model_validate(a) for a in raw_batch]
+            matching = _apply_filters(
+                batch, sport_types, name_contains,
+                min_distance_m, max_distance_m, min_elevation_gain, has_heartrate,
+            )
+            collected.extend(matching)
+
+            if len(raw_batch) < batch_size:
+                break  # Strava returned fewer than requested → last page reached
+
+            api_page += 1
+
+        activities = collected[:per_page]
 
     # --- sort (client-side always) ---
     reverse = sort_order == SortOrder.DESC

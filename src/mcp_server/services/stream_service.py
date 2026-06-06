@@ -16,8 +16,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from strava_mcp.api import endpoints, get
-from strava_mcp.models.enums import StreamKey
+from mcp_server.api import endpoints, get
+from mcp_server.models.enums import StreamKey
 
 
 # ---------------------------------------------------------------------------
