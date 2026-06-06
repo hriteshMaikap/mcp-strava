@@ -1,0 +1,9 @@
+{
+  "success": true,
+  "message": "Already authenticated \u2014 valid token found.",
+  "token_metadata": {
+    "token_type": "Bearer",
+    "expires_at": 1780756286,
+    "athlete": null
+  }
+}

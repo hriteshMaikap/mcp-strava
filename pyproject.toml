@@ -5,10 +5,12 @@ description = "MCP server for personalized running-plan analysis using Strava ac
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "google-genai>=2.8.0",
     "httpx>=0.28.1",
     "mcp[cli]>=1.26.0",
+    "pydantic>=2.0",
     "python-dotenv>=1.1.1",
 ]
 
 [project.scripts]
-strava-mcp = "server:main"
+strava-mcp = "strava_mcp.server:main"
