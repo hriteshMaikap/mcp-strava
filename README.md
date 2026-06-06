@@ -1,90 +1,17 @@
 # Strava MCP
 
-An MCP server for giving an AI assistant the Strava context it needs to build a realistic, personalized running plan.
+An MCP server and CLI client for giving an AI assistant the Strava context it needs to build a realistic, personalized running plan, analyse your performance, and act as a data-driven sports coach.
 
-This project is intentionally narrow in scope. It is not trying to expose every Strava capability for every possible workflow. The current toolset is designed for coaching-style use cases such as:
+## Two Ways to Use
 
-- understanding recent running history
-- reviewing individual runs in detail
-- checking rolled-up athlete stats
-- extracting enough context to build a personalized training plan
+This project caters to two specific use cases:
 
-If your goal is route discovery, segment browsing, club analysis, or broad Strava exploration, this server is probably too focused in its current form.
+### 1. The MCP Server (For Claude Desktop & GitHub Copilot)
 
-## What It Does Well
+For people who want to plug the Strava context directly into their existing AI environments via the Model Context Protocol (MCP).
 
-This server is best used when you want an AI model to:
-
-- inspect your running consistency and weekly mileage
-- review recent activities and long-run patterns
-- identify relevant benchmark efforts from your activity history
-- understand recovery, pace trends, and training load
-- propose a grounded half-marathon or similar running plan
-
-That is the primary distribution story for this repository: personalized plan generation from your own Strava data.
-
-## Available Tools
-
-- `login`
-  Completes the Strava OAuth flow and stores tokens locally in `.strava_token.json`.
-- `list_athlete_activities`
-  Lists activity summaries so the model can explore your training history.
-- `get_activity_by_id`
-  Fetches one activity in detail, including splits and optional segment efforts.
-- `get_athlete_stats`
-  Fetches rolled-up athlete statistics from Strava.
-
-## Safety And Privacy
-
-Before pushing this repository publicly:
-
-- keep `.env` out of Git
-- keep `.strava_token.json` out of Git
-- rotate credentials immediately if either file was ever committed anywhere
-- review client config files before sharing screenshots or snippets, because they can reveal absolute local paths
-
-This repo already ignores `.env` and `.strava_token.json`.
-
-Important: the server now avoids returning raw `access_token` and `refresh_token` values from the `login` tool response. Tokens are still stored locally for API access, but they are not echoed back to the MCP client.
-
-## Prerequisites
-
-- Python 3.11+
-- [`uv`](https://github.com/astral-sh/uv)
-- a Strava API application with:
-  - Authorization Callback Domain: `localhost`
-  - Redirect URI: `http://localhost:8000`
-
-Create a local `.env` file:
-
-```env
-STRAVA_CLIENT_ID=your_strava_client_id
-STRAVA_CLIENT_SECRET=your_strava_client_secret
-```
-
-## Local Setup With `uv`
-
-Install dependencies:
-
-```bash
-uv sync
-```
-
-Run the server directly:
-
-```bash
-uv run strava-mcp
-```
-
-Or:
-
-```bash
-uv run python server.py
-```
-
-## Claude Desktop
-
-Example `claude_desktop_config.json` entry:
+#### Claude Desktop
+You can set up the server for Claude Desktop by using stdio mode. Add this to your `claude_desktop_config.json`:
 
 ```json
 {
@@ -93,7 +20,7 @@ Example `claude_desktop_config.json` entry:
       "command": "uv",
       "args": [
         "--directory",
-        "C:\\Users\\YOUR_USER\\path\\to\\strava-mcp",
+        "/absolute/path/to/strava-mcp",
         "run",
         "strava-mcp"
       ]
@@ -102,98 +29,94 @@ Example `claude_desktop_config.json` entry:
 }
 ```
 
-Why this form:
-
-- it avoids hard-coding the venv Python path
-- it uses the packaged entrypoint from `pyproject.toml`
-- it keeps the server startup consistent across machines
-
-## GitHub Copilot And Other MCP Clients
-
-Any MCP client that supports a stdio server can use the same command pattern:
+#### GitHub Copilot
+Any MCP client that supports a stdio server or streamable-http can use the same command pattern:
 
 ```json
 {
-  "command": "uv",
-  "args": [
-    "--directory",
-    "/absolute/path/to/strava-mcp",
-    "run",
-    "strava-mcp"
-  ]
+	"servers": {
+		"strava-mcp": {
+			"url": "http://127.0.0.1:5001/mcp",
+			"type": "http"
+		}
+	},
+	"inputs": []
 }
 ```
 
-If the client supports environment injection, provide `STRAVA_CLIENT_ID` and `STRAVA_CLIENT_SECRET` there instead of relying on a local `.env` file.
+*Note: Make sure you provide `STRAVA_CLIENT_ID` and `STRAVA_CLIENT_SECRET` via your `.env` file or environment variables.*
 
-## Coaching Prompt Structure
+---
 
-This server works best when the AI coach follows a structured intake process instead of jumping straight into a plan.
+### 2. The Terminal Client (The CLI Route)
 
-Rather than hard-coding one personal prompt, use a framework like this:
+For those who are broke like me and want to interact via the terminal. This uses a built-in CLI client powered by Google's Gemini API (coz free!), functioning as a direct chat interface with your Strava data.
 
-1. Define the coaching role
-   Tell the model to act like a realistic running coach that prioritizes achievable progress over motivational fluff.
+**Prerequisites:**
+- Get a free API Key from [Google AI Studio](https://aistudio.google.com/).
+- This project leverages **Gemma 4 31B** (`gemma-4-31b-it`) by default (as configured in `llm.py`), giving you a powerful, data-driven local coach.
 
-2. State the goal clearly
-   Include the race distance, target outcome, and whether the target is completion-focused or time-focused.
+**Setup:**
+Create a local `.env` file with your credentials:
 
-3. Provide athlete background
-   Include training age, current consistency, body context if relevant, and any cross-training or strength work.
+```env
+STRAVA_CLIENT_ID=your_strava_client_id
+STRAVA_CLIENT_SECRET=your_strava_client_secret
+GEMINI_API_KEY=your_gemini_api_key
+```
 
-4. List running constraints
-   Mention preferred run frequency, available training days, terrain, treadmill access, weather constraints, and scheduling limits.
+**Run the CLI Client:**
 
-5. Mention injury and recovery context
-   Include current pain points, recurring issues, deload preferences, and anything the coach should avoid overloading.
+```bash
+uv run python src/cli_client/main.py
+```
 
-6. Tell the coach to inspect Strava before planning
-   Ask it to review activity history, recent consistency, long runs, pace trends, and current weekly mileage before writing the plan.
+---
 
-7. Tell the coach to identify benchmark efforts
-   Ask it to find useful reference performances such as recent best efforts at 5K, 10K, or longer sustained runs.
+## Capabilities & Available Tools
 
-8. Define the preferred training structure
-   Specify whether you want easy runs, workouts, long runs, recovery emphasis, or a fixed number of sessions per week.
+This assistant is a terse, numbers-first sports performance coach. It has access to a wide array of tools to fetch activities, analyze streams, review segments, and more.
 
-9. Define the plan output
-   Ask for a week-by-week structure, pace guidance in your preferred units, progression logic, deload weeks, and coaching notes for each run.
+### Tool Categories
+- **Authentication**: `login`
+- **Athlete Data**: `get_athlete_profile`, `get_athlete_stats`, `get_athlete_zones`, `get_athlete_clubs`, `get_gear_detail`
+- **Activities**: `list_activities`, `get_activity_detail`, `get_activity_details_batch`, `get_activity_laps`, `get_activity_zones`
+- **Telemetry Streams**: `get_pace_profile`, `get_hr_profile`, `get_power_profile`, `get_gps_track`, `get_raw_streams`, `analyse_distance_segment`
+- **Segments**: `get_starred_segments`, `get_segment`, `get_segment_efforts`, `explore_segments`, `star_segment`, `get_segment_effort_streams`
 
-10. Require grounded reasoning
-    Tell the model to explain why the volume and workout progression fit the athlete's current level rather than giving a generic template.
+### Known Limitations (Work In Progress)
 
-## Example Questions For The Coach
+- **Telemetry Streams**: If you don't want to burn your tokens, **avoid using telemetry streams based tools**. It is too unrestricted and currently a work in progress. We are actively trying to understand return formats and create better context to get the best data possible with the minimum amount of tokens, maximizing outputs so the CLI feels like an actual coach. It will work much better later.
 
-If you want a simpler template, these are the kinds of questions or inputs you would give your AI coach:
+### Example Prompts
 
-- What race or distance am I training for?
-- What is my actual current running level based on my Strava history?
-- What are my recent weekly mileage and consistency patterns?
-- Which activities best represent my current fitness?
-- How well do I handle easy runs, faster efforts, and long runs?
-- What recovery or injury risks show up from my training pattern?
-- Given my gym schedule and recovery limits, how many runs per week are realistic?
-- What training paces are appropriate for me right now?
-- How many weeks should my plan be?
-- Where should deload weeks go?
-- What should each run of the week be trying to achieve?
-- What is the most realistic way to progress toward my goal without overreaching?
+You can ask the coach complex, analytical questions about your training data:
 
-## Suggested Usage Flow
+- **"Show me my pace details for the longest run I have made."**
+- **"Explain run splits for longest run, where could I have improved."**
+- "What is my actual current running level based on my Strava history?"
+- "Which activities best represent my current fitness?"
+- "What are my recent weekly mileage and consistency patterns?"
+- "Given my gym schedule and recovery limits, how many runs per week are realistic?"
 
-For the coaching use case, the model should generally:
+---
 
-1. call `login`
-2. call `list_athlete_activities`
-3. inspect relevant runs with `get_activity_by_id`
-4. call `get_athlete_stats`
-5. synthesize current fitness, volume, and patterns
-6. produce a realistic plan with deloads and progression
+## Prerequisites & Installation
 
-## Publishing Checklist
+- Python 3.11+
+- [`uv`](https://github.com/astral-sh/uv)
+- A Strava API application with:
+  - Authorization Callback Domain: `localhost`
+  - Redirect URI: `http://localhost:8000`
 
-- confirm `.env` is not tracked
-- confirm `.strava_token.json` is not tracked
-- confirm no committed files contain copied token values
-- confirm the README does not promise unsupported Strava features
-- confirm the MCP client examples do not expose your personal filesystem paths
+Install dependencies:
+
+```bash
+uv sync
+```
+
+## Safety And Privacy
+
+- Keep `.env` and `.strava_token.json` out of Git.
+- Rotate credentials immediately if leaked.
+- The server avoids returning raw `access_token` and `refresh_token` values to the AI model. Tokens are stored locally for API access only.

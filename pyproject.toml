@@ -1,3 +1,7 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
 name = "strava-mcp"
 version = "0.1.0"
@@ -5,10 +9,16 @@ description = "MCP server for personalized running-plan analysis using Strava ac
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "google-genai>=2.8.0",
     "httpx>=0.28.1",
     "mcp[cli]>=1.26.0",
+    "pydantic>=2.0",
     "python-dotenv>=1.1.1",
 ]
 
 [project.scripts]
-strava-mcp = "server:main"
+strava-server = "mcp_server.main:main"
+strava-cli = "cli_client.main:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cli_client", "src/mcp_server"]
