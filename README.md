@@ -84,6 +84,10 @@ This assistant is a terse, numbers-first sports performance coach. It has access
 - **Telemetry Streams**: `get_pace_profile`, `get_hr_profile`, `get_power_profile`, `get_gps_track`, `get_raw_streams`, `analyse_distance_segment`
 - **Segments**: `get_starred_segments`, `get_segment`, `get_segment_efforts`, `explore_segments`, `star_segment`, `get_segment_effort_streams`
 
+### Known Limitations (Work In Progress)
+
+- **Telemetry Streams**: If you don't want to burn your tokens, **avoid using telemetry streams based tools**. It is too unrestricted and currently a work in progress. We are actively trying to understand return formats and create better context to get the best data possible with the minimum amount of tokens, maximizing outputs so the CLI feels like an actual coach. It will work much better later.
+
 ### Example Prompts
 
 You can ask the coach complex, analytical questions about your training data:
