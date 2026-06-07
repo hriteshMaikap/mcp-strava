@@ -14,7 +14,11 @@ The project features a custom **Context Distillation Engine** that solves LLM co
 
 - **Double-Agent Utility**: 
   - **MCP Server**: Seamless stdio/HTTP integration with Claude Desktop, GitHub Copilot, Cursor, or any other MCP-compliant client.
-  - **Terminal Client**: A lightweight, standalone CLI chat client powered by Google's **Gemma 4 31B** for a data-driven coaching experience directly in your terminal.
+  - **Terminal Client**: A lightweight, standalone CLI agent powered by Google's **Gemma 4 31B** for a data-driven coaching experience directly in your terminal.
+- **Client-Side Agent Harness**:
+  - Owns the model/tool loop instead of relying on a single LLM call.
+  - Manages MCP tool validation, execution budgets, repeated-tool protection, tool-error recovery, and stop reasons.
+  - Maintains compact session memory plus recent turns so long chats keep the useful context without flooding the model.
 - **Context Distillation Engine**:
   - **Structural Stripping**: Recursive removal of empty fields, redundant UI metadata, null values, and noise booleans.
   - **Semantic Compression**: Automated stripping of polylines, image assets, and zero-activity sports blocks.
@@ -102,7 +106,7 @@ Connect via stdio or host the server locally and connect using the streamable-ht
 
 ### 2. Standalone Terminal CLI Client
 
-For local terminal-based interaction. This client uses a direct chat session configured for Gemini models.
+For local terminal-based interaction. This client runs a small agent harness around a Gemini chat session and the local MCP server.
 
 **Prerequisites:**
 - Obtain a free API key from [Google AI Studio](https://aistudio.google.com/).
@@ -115,6 +119,20 @@ For local terminal-based interaction. This client uses a direct chat session con
 ```bash
 uv run python src/cli_client/main.py
 ```
+
+### CLI Agent Architecture
+
+The terminal client is split into focused layers:
+
+| Layer | Role |
+|---|---|
+| `main.py` | Starts the MCP connection, builds the agent, and runs the REPL. |
+| `agent.py` | Runs the agent loop: context assembly, function-call handling, budgets, retries, and stop reasons. |
+| `orchestrator.py` | Executes MCP tools, normalizes tool responses, and writes observability logs. |
+| `chat_session.py` | Tracks turns, active sport context, compact session memory, and recent context. |
+| `llm.py` | Creates the Gemini client/chat and converts MCP tool schemas into Gemini function declarations. |
+
+Each agent turn continues until the model produces a final answer or a guardrail is reached, such as `max_steps`, repeated tool calls, or repeated tool errors. Raw tool payloads are still written under `observability/`, while the model receives a structured function response containing success state, result text, preview, and log path.
 
 ---
 

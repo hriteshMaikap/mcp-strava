@@ -32,7 +32,7 @@ OnToolError   = Callable[[str, str], None]           # (tool_name, err_msg)
 # MCP bridge
 # ---------------------------------------------------------------------------
 
-async def _execute_tool(
+async def execute_tool(
     mcp: McpSession,
     name: str,
     args: dict,
@@ -47,11 +47,25 @@ async def _execute_tool(
         result = await mcp.call_tool(name, arguments=args)
     except Exception as exc:
         on_error(name, str(exc))
-        return {"error": str(exc)}
+        return {
+            "ok": False,
+            "tool_name": name,
+            "error": str(exc),
+            "result": None,
+            "preview": str(exc),
+            "log_path": None,
+        }
 
     if not result.content:
         on_result("[no data returned]", "—")
-        return {"result": "Success (no data returned)"}
+        return {
+            "ok": True,
+            "tool_name": name,
+            "error": None,
+            "result": "Success (no data returned)",
+            "preview": "[no data returned]",
+            "log_path": None,
+        }
 
     # FastMCP serialises Python lists as multiple TextContent blocks.
     # Join them all into a single JSON array so nothing is lost.
@@ -80,7 +94,14 @@ async def _execute_tool(
         preview += "…"
 
     on_result(preview, log_path)
-    return {"result": raw_text}
+    return {
+        "ok": True,
+        "tool_name": name,
+        "error": None,
+        "result": raw_text,
+        "preview": preview,
+        "log_path": log_path,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -114,7 +135,7 @@ async def run_turn(
 
             on_tool_call(name, args)
 
-            tool_result = await _execute_tool(
+            tool_result = await execute_tool(
                 mcp, name, args,
                 on_result=on_tool_result,
                 on_error=on_tool_error,

@@ -26,7 +26,7 @@ from mcp.client.sse import sse_client
 
 from cli_client import ui
 from cli_client import llm
-from cli_client import orchestrator
+from cli_client.agent import AgentRunner
 from cli_client.chat_session import ChatSession
 
 load_dotenv()
@@ -99,6 +99,11 @@ async def async_main() -> None:
             gemini_client = llm.build_client()
             gemini_tools  = llm.mcp_tools_to_gemini(mcp_tools_raw)
             chat           = llm.create_chat(gemini_client, gemini_tools)
+            agent          = AgentRunner(
+                chat=chat,
+                mcp=mcp_session,
+                tool_names=[tool.name for tool in mcp_tools_raw.tools],
+            )
 
             tool_count = len(mcp_tools_raw.tools)
             ui.print_info(f"ready · {tool_count} tools loaded")
@@ -154,9 +159,8 @@ async def async_main() -> None:
                 loader = ui.Loader(sport=session.sport).start()
 
                 try:
-                    reply, tools_used = await orchestrator.run_turn(
-                        chat=chat,
-                        mcp=mcp_session,
+                    result = await agent.run(
+                        session=session,
                         user_message=text,
                         on_tool_call=lambda name, args: (
                             loader.set_verb(ui.tool_verb(name)),
@@ -177,8 +181,8 @@ async def async_main() -> None:
                 finally:
                     loader.stop()
 
-                session.add_agent(reply, tools_used)
-                ui.print_agent_response(reply)
+                session.add_agent(result.final_text, result.tools_used)
+                ui.print_agent_response(result.final_text)
 
 
 def main() -> None:
