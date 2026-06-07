@@ -51,8 +51,25 @@ def register(mcp: FastMCP) -> None:
         """
         List Strava activities with combined API and client-side filtering.
 
-        Use this tool FIRST to get a filtered list of activity IDs before
-        calling detail endpoints. Returns lightweight summaries — not full data.
+        Use this tool FIRST to narrow to relevant activity IDs before calling
+        any detail or stream tool. Returns lightweight summaries only — not
+        splits, lap data, or stream analytics.
+
+        Use this when the user asks about:
+          · Any question requiring a set of activities ("my last 5 runs",
+            "runs in April", "my fastest 10K this year")
+          · Finding a specific activity by date, sport, distance, or name
+          · Getting an overview of training volume or frequency
+          · Identifying the ID needed for a detail or stream tool call
+
+        Common patterns:
+          "My last run"        → per_page=1, sport_types=["Run"], sort_order="desc"
+          "Runs in April"      → after_date="2025-04-01", before_date="2025-04-30",
+                                  sport_types=["Run"]
+          "Longest run ever"   → sort_by="distance", sort_order="desc", per_page=1
+          "Fastest 5K"        → min_distance_km=4.9, max_distance_km=5.1,
+                                  sort_by="average_speed", sort_order="desc"
+          "Recent 3 months"    → days_back=90, per_page=200
 
         TIME WINDOW (use one approach):
           days_back    [abstract] Convenience: last N days, e.g. 90 for 3 months.
@@ -144,11 +161,24 @@ def register(mcp: FastMCP) -> None:
         include_all_efforts: bool = False,
     ) -> dict[str, Any]:
         """
-        Fetch full detail for a single activity.
+        Fetch full detail for a single activity including per-km splits.
 
         Use AFTER list_activities to identify the relevant ID.
         Heavier payload than list_activities — includes splits, laps,
         gear, calories, and description.
+
+        Use this when the user asks about:
+          · Per-km splits for a single run (splits_metric has pace_min_per_km
+            per km — sufficient for basic split analysis without stream tools)
+          · Calories burned, description, or gear used
+          · Lap breakdown (also available via get_activity_laps for richer data)
+          · Segment efforts on a specific activity
+          · Overall activity metadata not in the list summary
+
+        Prefer get_pace_profile instead when:
+          · The user wants negative/positive split classification (split_type field)
+          · The user wants elevation-vs-pace correlation per km
+          · The user needs pace variability analysis
 
         Args:
             activity_id          [API] Strava activity ID (integer from list_activities).
@@ -162,6 +192,7 @@ def register(mcp: FastMCP) -> None:
             Full activity dict. Key fields beyond list_activities:
             - splits_metric: list of per-km splits, each with pace_min_per_km,
               pace_formatted, elevation_difference, pace_zone
+              (use this for basic per-km comparison without a stream call)
             - laps: list of laps with pace_min_per_km, pace_formatted,
               average_cadence, average_watts, average_heartrate
             - description, calories, gear (name, brand, distance logged)
@@ -175,11 +206,24 @@ def register(mcp: FastMCP) -> None:
         include_all_efforts: bool = False,
     ) -> list[dict[str, Any]]:
         """
-        Fetch full detail for a list of activity IDs.
+        Fetch full detail for a list of activity IDs in one call.
 
-        Use for cross-activity analysis (e.g. pace progression, training load
-        comparisons). Always narrow the ID list first with list_activities —
-        never call this with unfiltered IDs.
+        Use for cross-activity analysis — pace progression, training load
+        comparisons, gear tracking across sessions. Always narrow the ID
+        list first with list_activities — never call with unfiltered IDs.
+
+        Use this when the user asks about:
+          · Pace trend across multiple activities (e.g. "how has my 5K pace
+            improved over the last 10 runs?")
+          · Comparing splits_metric[0].pace_formatted for the first km across
+            a series of runs
+          · Average HR or watts trends across a training block
+          · Gear mileage accumulation across activities
+
+        Prefer calling get_pace_profile per activity instead when:
+          · The user needs elevation-correlated pace analysis per activity
+          · The user needs split_type (negative/positive) per activity
+          · Fewer than 5 activities are involved (individual calls are clearer)
 
         Args:
             activity_ids         [API] List of Strava activity IDs. Processed
@@ -208,7 +252,19 @@ def register(mcp: FastMCP) -> None:
         Fetch lap-by-lap breakdown for an activity.
 
         Lap data is richer than splits_metric in get_activity_detail:
-        includes heartrate, cadence, watts per lap.
+        includes heartrate, cadence, and watts per lap. Laps correspond
+        to manual lap-button presses or auto-lap triggers (typically every
+        1 km or at specific intervals), not necessarily every kilometre.
+
+        Use this when the user asks about:
+          · Interval workout analysis ("how fast were my 400m repeats?")
+          · Lap-by-lap HR or power comparison
+          · Whether effort was consistent across laps
+          · Negative/positive split detection at lap granularity
+
+        Prefer get_pace_profile instead when:
+          · The user wants kilometre-based splits (not lap-based)
+          · The activity did not use manual laps (auto-lap may not match intent)
 
         Args:
             activity_id  [API] Strava activity ID. Sent to GET /activities/{id}/laps.
@@ -222,9 +278,6 @@ def register(mcp: FastMCP) -> None:
             - average_cadence, average_watts, device_watts
             - average_heartrate, max_heartrate
             - start_date_local (ISO string)
-
-        Best for: interval analysis, negative/positive split detection,
-        comparing specific laps across sessions.
         """
         return activity_service.get_laps(activity_id)
 

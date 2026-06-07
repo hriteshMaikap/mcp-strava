@@ -4,6 +4,12 @@ Stream tools expose PURPOSE-named functions rather than raw API keys.
 The LLM calls get_pace_profile, get_hr_profile, etc. — not "give me
 velocity_smooth and heartrate streams".
 
+IMPORTANT — Output format:
+  All stream tools return DISTILLED summaries, NOT raw per-second arrays.
+  A 12km run that would produce ~57,000 tokens of raw data is distilled
+  into ~500 tokens of per-km aggregates before reaching the LLM.
+  Never expect raw {data: [...]} arrays from these tools.
+
 The one exception is get_raw_streams, which exposes the key list explicitly
 for advanced / composite use cases.
 
@@ -29,25 +35,50 @@ def register(mcp: FastMCP) -> None:
         activity_id: int,
     ) -> dict[str, Any]:
         """
-        Fetch the pace, distance, and elevation streams for an activity.
+        Analyse pace, elevation, and pacing strategy for an activity.
 
-        Internally requests: time, distance, velocity_smooth, altitude.
-        Use this for: per-km pace charts, elevation-pace correlation,
-        pacing strategy analysis, identifying fade or negative splits.
+        Returns pre-computed per-km splits and a pacing summary — NOT
+        raw per-second arrays. This is the primary tool for pace analysis,
+        split detection, and pacing strategy review.
+
+        Use this when the user asks about:
+          · Negative or positive splits ("did I run faster in the second half?")
+          · Pace per km / mile breakdown
+          · Fastest or slowest kilometre in an activity
+          · Pacing consistency or fade (pace variability)
+          · How elevation affected pace on a specific run
+
+        Prefer get_activity_detail instead when:
+          · You only need basic per-km splits without elevation correlation
+          · The user's question can be answered from splits_metric alone
+          · You are comparing splits across multiple activities (use batch)
 
         Args:
-            activity_id  [API] Strava activity ID.
-                               Sent to GET /activities/{id}/streams
-                               with keys=time,distance,velocity_smooth,altitude.
+            activity_id  [API] Strava activity ID (integer from list_activities).
+                               Internally fetches time, distance, velocity_smooth,
+                               altitude streams from GET /activities/{id}/streams.
 
         Returns:
-            Dict keyed by stream type. Each stream has:
-            - data: list of values at each GPS second
-            - original_size: total data points
-            - resolution: "low" | "medium" | "high"
-            - series_type: "distance" | "time"
+            data_points_raw: int — raw GPS data points captured (reference only)
 
-            velocity_smooth.data is in m/s. Convert: pace_min_km = 1000/(v*60)
+            per_km: list of dicts, one per kilometre:
+              · km            — kilometre number (1-indexed)
+              · distance_m    — actual metres covered in this km segment
+              · elapsed_s     — seconds to cover this km segment
+              · pace          — pace string e.g. "6:27/km"
+              · speed_ms      — average speed in m/s
+              · smooth_speed_ms — smoothed average speed in m/s
+              · elev_gain_m   — elevation gained in this km (metres)
+              · elev_loss_m   — elevation lost in this km (metres)
+
+            summary:
+              · total_km, total_time_s, avg_pace
+              · fastest_km: {km, pace} — the fastest kilometre
+              · slowest_km: {km, pace} — the slowest kilometre
+              · first_half_pace, second_half_pace — for split analysis
+              · split_type: "negative" (second half faster) | "positive" (second half slower)
+              · total_elev_gain_m, total_elev_loss_m
+              · pace_variability_pct — coefficient of variation across km splits
         """
         return stream_service.get_pace_profile(activity_id)
 
@@ -57,20 +88,47 @@ def register(mcp: FastMCP) -> None:
         activity_id: int,
     ) -> dict[str, Any]:
         """
-        Fetch heart rate, distance, time, and velocity streams for an activity.
+        Analyse heart rate trends, drift, and aerobic efficiency for an activity.
 
-        Internally requests: time, distance, heartrate, velocity_smooth.
-        Use this for: HR drift analysis, aerobic decoupling (HR vs pace over time),
-        HR-zone time-in-zone computation, cardiac efficiency tracking.
+        Returns pre-computed per-km HR averages, overall HR statistics, and
+        aerobic efficiency metrics — NOT raw per-second HR arrays.
+
+        Use this when the user asks about:
+          · Heart rate drift (HR rising over the activity at same pace = aerobic decoupling)
+          · Average or max heart rate
+          · Aerobic efficiency (how far per heartbeat)
+          · HR-to-pace relationship across kilometres
+          · Whether an effort was aerobic or anaerobic
+
+        Prefer get_activity_detail instead when:
+          · You only need the overall average_heartrate (already in the summary)
+          · You are comparing average HR across multiple activities
+
+        Requires: activity must have been recorded with a heart rate sensor.
+        Check has_heartrate == true in list_activities before calling.
+        If no HR sensor, the hr_summary block will be absent.
 
         Args:
-            activity_id  [API] Strava activity ID.
-                               Sent to GET /activities/{id}/streams
-                               with keys=time,distance,heartrate,velocity_smooth.
+            activity_id  [API] Strava activity ID (integer from list_activities).
+                               Internally fetches time, distance, heartrate,
+                               velocity_smooth streams from GET /activities/{id}/streams.
 
         Returns:
-            Dict keyed by stream type. heartrate.data is in bpm.
-            If the activity has no HR sensor, heartrate stream will be absent.
+            data_points_raw: int — raw GPS data points captured (reference only)
+
+            per_km: list of dicts, one per kilometre:
+              · km, distance_m, elapsed_s, pace, speed_ms
+              · avg_hr  — average bpm in this km segment
+              · max_hr  — peak bpm in this km segment
+
+            hr_summary (present only when HR sensor data exists):
+              · avg_hr, max_hr, min_hr — overall activity HR stats
+              · hr_drift_pct — % rise in avg HR from first half to second half
+                               Positive = cardiac drift (harder to maintain pace)
+                               Negative = cardiac improvement (warm-up effect)
+              · first_half_avg_hr, second_half_avg_hr
+              · metres_per_heartbeat — aerobic efficiency metric
+                                       Higher = more distance per heartbeat = better fitness
         """
         return stream_service.get_hr_profile(activity_id)
 
@@ -80,22 +138,45 @@ def register(mcp: FastMCP) -> None:
         activity_id: int,
     ) -> dict[str, Any]:
         """
-        Fetch power, cadence, distance, time, and velocity streams.
+        Analyse power output, cadence, and normalised power for an activity.
 
-        Internally requests: time, distance, watts, cadence, velocity_smooth.
-        Use this for: power curve (MMP) analysis, normalised power computation,
-        cadence distribution, power-to-speed efficiency.
+        Returns pre-computed per-km power and cadence averages, plus overall
+        power metrics including Normalised Power — NOT raw per-second arrays.
 
-        Only returns meaningful data for activities with a power meter.
-        Check activity.device_watts == True before calling.
+        Use this when the user asks about:
+          · Normalised Power (NP) or weighted average power
+          · Average or peak power output
+          · Cadence distribution or average cadence
+          · Power-to-speed efficiency
+          · Power analysis for a cycling or running-with-power activity
+
+        Only returns meaningful data for activities recorded with a power meter.
+        Check activity.device_watts == true in get_activity_detail before calling.
 
         Args:
-            activity_id  [API] Strava activity ID.
-                               Sent to GET /activities/{id}/streams
-                               with keys=time,distance,watts,cadence,velocity_smooth.
+            activity_id  [API] Strava activity ID (integer from list_activities).
+                               Internally fetches time, distance, watts, cadence,
+                               velocity_smooth streams from GET /activities/{id}/streams.
 
         Returns:
-            Dict keyed by stream type. watts.data is in W, cadence.data in rpm.
+            data_points_raw: int — raw GPS data points captured (reference only)
+
+            per_km: list of dicts, one per kilometre:
+              · km, distance_m, elapsed_s, pace, speed_ms
+              · avg_watts  — average power in this km segment (W)
+              · max_watts  — peak power in this km segment (W)
+              · avg_cadence — average cadence in this km segment (rpm)
+
+            power_summary (present when power meter data exists):
+              · avg_power_w    — activity average power (W)
+              · max_power_w    — peak power (W)
+              · normalised_power_w — Normalised Power (NP): 30s rolling average
+                                     raised to 4th power, averaged, 4th root taken.
+                                     Better than avg_power for variable-intensity efforts.
+
+            cadence_summary (present when cadence data exists):
+              · avg_cadence_rpm — average cadence excluding zeros (moving only)
+              · max_cadence_rpm — peak cadence
         """
         return stream_service.get_power_profile(activity_id)
 
@@ -105,21 +186,44 @@ def register(mcp: FastMCP) -> None:
         activity_id: int,
     ) -> dict[str, Any]:
         """
-        Fetch GPS coordinates, distance, and altitude streams.
+        Fetch the geographic footprint and elevation profile of an activity.
 
-        Internally requests: latlng, distance, altitude.
-        Use this for: map rendering, route display, GPS-based elevation profiling.
+        Returns a distilled geographic summary — bounding box, start/end
+        coordinates, and elevation stats — NOT the raw array of thousands
+        of lat/lng pairs. The encoded polyline for route display already
+        exists in the activity summary from list_activities/get_activity_detail.
+
+        Use this when the user asks about:
+          · Where an activity took place (city, region, general area)
+          · Start and end location of a run or ride
+          · Elevation gain or loss (total, min, max altitude)
+          · Whether an activity was a loop (start ≈ end coordinates)
+
+        Prefer get_activity_detail instead when:
+          · You only need total_elevation_gain (already in the activity summary)
+          · You need the encoded polyline for a map (use summary_polyline if available)
 
         Args:
-            activity_id  [API] Strava activity ID.
-                               Sent to GET /activities/{id}/streams
-                               with keys=latlng,distance,altitude.
+            activity_id  [API] Strava activity ID (integer from list_activities).
+                               Internally fetches latlng, distance, altitude
+                               streams from GET /activities/{id}/streams.
 
         Returns:
-            Dict with:
-            - latlng.data: list of [latitude, longitude] pairs
-            - distance.data: cumulative metres at each GPS point
-            - altitude.data: metres above sea level at each GPS point
+            data_points_raw: int — original GPS data points (reference only)
+
+            bounding_box:
+              · sw: [lat, lng] — south-west corner of the route bounding box
+              · ne: [lat, lng] — north-east corner of the route bounding box
+
+            start_latlng: [lat, lng] — GPS coordinates where the activity started
+            end_latlng:   [lat, lng] — GPS coordinates where the activity ended
+            total_distance_m: float — total distance in metres
+
+            elevation:
+              · min_m   — lowest altitude reached (metres above sea level)
+              · max_m   — highest altitude reached (metres above sea level)
+              · gain_m  — total elevation gained (metres)
+              · loss_m  — total elevation lost (metres)
         """
         return stream_service.get_gps_track(activity_id)
 
@@ -135,27 +239,31 @@ def register(mcp: FastMCP) -> None:
 
         This is a pure abstract tool — it has no direct Strava API equivalent.
         Internally fetches pace + HR streams and slices the requested window.
+        Use this for precise sub-activity analysis at any distance boundary.
 
-        Common use cases:
+        Use this when the user asks about:
+          · Pace for a specific segment: "first km", "last 2km", "km 3 to 7"
+          · Comparing first-km pace across multiple runs (call once per activity)
+          · Analysing performance in a specific race segment
+
+        Common distance ranges:
           First km:     start_m=0,    end_m=1000   (default)
           5–10 km:      start_m=5000, end_m=10000
           Last 2 km:    start_m=total_distance-2000, end_m=total_distance
-          Middle third: compute from total distance
+          Middle third: compute from total_distance in activity detail
 
-        For first-km progression across multiple runs:
+        For first-km pace trend across multiple runs:
           → Call list_activities to get run IDs
-          → Call this function for each ID with start_m=0, end_m=1000
-          → Compare pace_min_per_km across dates
+          → Call this once per ID with start_m=0, end_m=1000
+          → Compare pace_formatted across dates
 
         Args:
-            activity_id  [API]      Strava activity ID. Used to fetch streams from
-                                    GET /activities/{id}/streams.
-            start_m      [abstract] Distance marker where the segment starts (metres
-                                    into the activity). Default 0 (activity start).
-            end_m        [abstract] Distance marker where the segment ends (metres
-                                    into the activity). Default 1000 (first km).
-                                    If the activity is shorter than end_m, the last
-                                    available data point is used.
+            activity_id  [API]      Strava activity ID.
+            start_m      [abstract] Distance in metres where the segment starts.
+                                    Default 0 (activity start).
+            end_m        [abstract] Distance in metres where the segment ends.
+                                    Default 1000 (first km). If the activity is
+                                    shorter than end_m, the last point is used.
 
         Returns:
             start_m, end_m, covered_m — actual distances from stream data
@@ -176,17 +284,21 @@ def register(mcp: FastMCP) -> None:
         stream_keys: list[str],
     ) -> dict[str, Any]:
         """
-        Fetch specific stream types by name — for advanced or composite use cases.
+        Fetch and aggregate specific stream types for advanced or composite analysis.
 
         Prefer the named analysis tools (get_pace_profile, get_hr_profile, etc.)
-        over this function. Use get_raw_streams only when you need a combination
-        of streams not covered by the named tools.
+        over this function. Use get_raw_streams only when you need a stream
+        combination not covered by the named tools (e.g. temp + cadence together).
+
+        IMPORTANT — Output format:
+          Returns DISTILLED per-km aggregates, NOT raw per-second arrays.
+          If distance + time are both requested, a full per-km breakdown is
+          computed for all other streams. Without distance/time, returns
+          summary stats (min, max, avg) for each stream.
 
         Args:
             activity_id   [API] Strava activity ID.
-            stream_keys   [API] List of stream type names to fetch. These map
-                                directly to the Strava API `keys` query param.
-                                Valid values:
+            stream_keys   [API] List of stream type names to fetch. Valid values:
                                   time            — seconds from activity start
                                   distance        — cumulative metres
                                   latlng          — [[lat, lng], ...] pairs
@@ -200,7 +312,23 @@ def register(mcp: FastMCP) -> None:
                                   grade_smooth    — smoothed gradient percent
 
         Returns:
-            Dict keyed by stream type. Only requested + available keys appear.
+            streams_requested: list of keys actually fetched
+            data_points_raw: int — original data resolution
+
+            per_km (when distance + time included): list of per-km dicts
+              containing aggregates for each requested stream
+
+            summary (when distance + time included): overall pacing summary
+              (same structure as get_pace_profile summary)
+
+            {key}_stats (fallback without distance/time):
+              {count, avg, min, max} for each numeric stream
+
+            geo (when latlng included):
+              bounding_box_sw, bounding_box_ne, start, end coordinates
+
+            moving_pct (when moving included):
+              percentage of time the athlete was moving
         """
         keys = [StreamKey(k) for k in stream_keys]
         return stream_service.get_streams(activity_id, keys)
@@ -212,10 +340,16 @@ def register(mcp: FastMCP) -> None:
         stream_keys: list[str] | None = None,
     ) -> dict[str, Any]:
         """
-        Fetch streams for a specific segment effort.
+        Fetch distilled stream analytics for a specific segment effort.
 
-        Use after get_segment_efforts to drill into the raw time-series
-        for one particular segment effort (e.g. a PR attempt on a climb).
+        Use after get_segment_efforts to drill into the time-series data for
+        one particular segment effort (e.g. a PR attempt on a climb or sprint).
+        Returns the same distilled per-km format as get_raw_streams.
+
+        Use this when the user asks about:
+          · Pace, power, or HR during a specific segment attempt
+          · How pacing varied across a segment (e.g. did they go out too hard?)
+          · Comparing stream data between two efforts on the same segment
 
         Args:
             effort_id    [API]      Strava segment effort ID (from get_segment_efforts).
@@ -225,7 +359,9 @@ def register(mcp: FastMCP) -> None:
                                     Same valid values as get_raw_streams.
 
         Returns:
-            Dict keyed by stream type, same structure as other stream tools.
+            Same distilled structure as get_raw_streams:
+            per_km splits + summary when distance/time included,
+            or summary stats per stream otherwise.
         """
         keys: list[StreamKey] | None = None
         if stream_keys:
