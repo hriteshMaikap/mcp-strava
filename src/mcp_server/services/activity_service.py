@@ -84,6 +84,15 @@ def _apply_filters(
     return activities
 
 
+def _page_slice(items: list, page: int, per_page: int) -> list:
+    """Apply 1-indexed pagination after client-side filtering and sorting."""
+    safe_page = max(page, 1)
+    safe_per_page = max(per_page, 1)
+    start = (safe_page - 1) * safe_per_page
+    end = start + safe_per_page
+    return items[start:end]
+
+
 def list_activities(
     # ---- native Strava API params ----
     before: int | None = None,
@@ -114,12 +123,14 @@ def list_activities(
     When no client-side filters are active, a single API page is fetched using
     the caller-supplied `page` and `per_page` directly (original behaviour).
     """
-    use_autopaginate = _has_client_filters(
+    has_client_filters = _has_client_filters(
         sport_types, name_contains, min_distance_m, max_distance_m,
         min_elevation_gain, has_heartrate,
     )
 
-    if not use_autopaginate:
+    requires_full_scan = sort_by != SortField.DATE or sort_order != SortOrder.DESC
+
+    if not has_client_filters and not requires_full_scan:
         # Fast path: no client-side filters — single API call, exact page/per_page.
         raw: list[dict[str, Any]] = get(
             endpoints.activities_list(),
@@ -132,7 +143,7 @@ def list_activities(
         scanned   = 0
         api_page  = 1
 
-        while len(collected) < per_page and scanned < _MAX_SCAN_TOTAL:
+        while scanned < _MAX_SCAN_TOTAL:
             batch_size = min(_API_BATCH_SIZE, _MAX_SCAN_TOTAL - scanned)
             raw_batch: list[dict[str, Any]] = get(
                 endpoints.activities_list(),
@@ -155,19 +166,24 @@ def list_activities(
             )
             collected.extend(matching)
 
+            if not requires_full_scan and len(collected) >= page * per_page:
+                break
+
             if len(raw_batch) < batch_size:
                 break  # Strava returned fewer than requested → last page reached
 
             api_page += 1
 
-        activities = collected[:per_page]
+        activities = collected
 
     # --- sort (client-side always) ---
     reverse = sort_order == SortOrder.DESC
     sort_attr = sort_by.value
     activities.sort(key=lambda a: getattr(a, sort_attr) or 0, reverse=reverse)
 
-    return distill.distill_summaries([_serialize_summary(a) for a in activities])
+    return distill.distill_summaries([
+        _serialize_summary(a) for a in _page_slice(activities, page, per_page)
+    ])
 
 
 # ---------------------------------------------------------------------------
