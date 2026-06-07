@@ -1,18 +1,74 @@
 # Strava MCP
 
-An MCP server and CLI client for giving an AI assistant the Strava context it needs to build a realistic, personalized running plan, analyse your performance, and act as a data-driven sports coach.
+[![Python Version](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![MCP Protocol](https://img.shields.io/badge/Protocol-MCP-orange.svg)](https://modelcontextprotocol.io/)
 
-## Two Ways to Use
+Strava MCP is a Model Context Protocol (MCP) server and interactive command-line interface (CLI) client designed to give AI assistants direct, structured access to your Strava training data. By acting as a data-driven sports performance coach, it enables LLMs to construct personalized training plans, analyze workouts, and track progress using raw telemetry and athlete metrics.
 
-This project caters to two specific use cases:
+The project features a custom **Context Distillation Engine** that solves LLM context window issues by condensing raw, high-resolution Strava API payloads (often >50K tokens) by up to **98.6%** without sacrificing key analytical details.
 
-### 1. The MCP Server (For Claude Desktop & GitHub Copilot)
+---
 
-For people who want to plug the Strava context directly into their existing AI environments via the Model Context Protocol (MCP).
+## Key Features
 
-#### Claude Desktop
-You can set up the server for Claude Desktop by using stdio mode. Add this to your `claude_desktop_config.json`:
+- **Double-Agent Utility**: 
+  - **MCP Server**: Seamless stdio/HTTP integration with Claude Desktop, GitHub Copilot, Cursor, or any other MCP-compliant client.
+  - **Terminal Client**: A lightweight, standalone CLI chat client powered by Google's **Gemma 4 31B** for a data-driven coaching experience directly in your terminal.
+- **Context Distillation Engine**:
+  - **Structural Stripping**: Recursive removal of empty fields, redundant UI metadata, null values, and noise booleans.
+  - **Semantic Compression**: Automated stripping of polylines, image assets, and zero-activity sports blocks.
+  - **Statistical Telemetry Aggregation**: Translates raw time-series arrays (thousands of per-second data points) into concise per-kilometer summaries, complete with pace variability, heart rate drift, and normalized power calculations.
+- **Full-Spectrum Strava Context**: Complete tool support for athlete statistics, fitness zones, gear, activity details, laps, segment efforts, and telemetry streams.
 
+---
+
+## Context Distillation & Token Efficiency
+
+Raw Strava API payloads are built for rich UI rendering and contain per-second GPS/heart-rate streams. Feeding this raw data directly to an LLM easily overflows context windows:
+- A raw `get_pace_profile` stream for a 12km run occupies **~56,822 tokens**.
+- Our **Context Distillation Engine** aggregates and filters this down to **~789 tokens (a 70x compression ratio)**.
+- Cumulative tokens for complex multi-tool queries drop from **440,663** down to **6,293 tokens**, making telemetry analysis highly efficient and affordable.
+
+---
+
+## Installation & Initial Setup
+
+Before choosing how you want to interact with the project, configure your Strava API credentials and local environment.
+
+### Prerequisites
+- Python 3.11+
+- [uv](https://github.com/astral-sh/uv) (fast Python package installer and resolver)
+
+### 1. Clone & Install
+```bash
+git clone https://github.com/your-username/strava-mcp.git
+cd strava-mcp
+uv sync
+```
+
+### 2. Register Your Strava Application
+1. Log into your account and navigate to [Strava API Settings](https://www.strava.com/settings/api).
+2. Create a new application.
+3. Set **Authorization Callback Domain** to `localhost`.
+4. Note your Client ID and Client Secret.
+
+### 3. Environment Configuration
+Create a `.env` file in the root of the project:
+```env
+STRAVA_CLIENT_ID=your_strava_client_id
+STRAVA_CLIENT_SECRET=your_strava_client_secret
+# GEMINI_API_KEY=your_gemini_api_key (Only required for the CLI client)
+```
+
+---
+
+## Usage Guide
+
+### 1. Integrating as an MCP Server
+
+#### For Claude Desktop
+Add the following configuration to your `claude_desktop_config.json`:
 ```json
 {
   "mcpServers": {
@@ -29,94 +85,94 @@ You can set up the server for Claude Desktop by using stdio mode. Add this to yo
 }
 ```
 
-#### GitHub Copilot
-Any MCP client that supports a stdio server or streamable-http can use the same command pattern:
-
+#### For GitHub Copilot / Cursor
+Connect via stdio or host the server locally and connect using the streamable-http configuration:
 ```json
 {
-	"servers": {
-		"strava-mcp": {
-			"url": "http://127.0.0.1:5001/mcp",
-			"type": "http"
-		}
-	},
-	"inputs": []
+  "servers": {
+    "strava-mcp": {
+      "url": "http://127.0.0.1:5001/mcp",
+      "type": "http"
+    }
+  }
 }
 ```
 
-*Note: Make sure you provide `STRAVA_CLIENT_ID` and `STRAVA_CLIENT_SECRET` via your `.env` file or environment variables.*
-
 ---
 
-### 2. The Terminal Client (The CLI Route)
+### 2. Standalone Terminal CLI Client
 
-For those who are broke like me and want to interact via the terminal. This uses a built-in CLI client powered by Google's Gemini API (coz free!), functioning as a direct chat interface with your Strava data.
+For local terminal-based interaction. This client uses a direct chat session configured for Gemini models.
 
 **Prerequisites:**
-- Get a free API Key from [Google AI Studio](https://aistudio.google.com/).
-- This project leverages **Gemma 4 31B** (`gemma-4-31b-it`) by default (as configured in `llm.py`), giving you a powerful, data-driven local coach.
-
-**Setup:**
-Create a local `.env` file with your credentials:
-
-```env
-STRAVA_CLIENT_ID=your_strava_client_id
-STRAVA_CLIENT_SECRET=your_strava_client_secret
-GEMINI_API_KEY=your_gemini_api_key
-```
+- Obtain a free API key from [Google AI Studio](https://aistudio.google.com/).
+- Set the key in your `.env` file as `GEMINI_API_KEY`.
+- By default, the client leverages **Gemma 4 31B** (`gemma-4-31b-it`).
+  - **Maximum Context Length**: 262,144 tokens (includes input and output combined).
+  - **Maximum Output Limit**: Varies by provider (typically 8,192 to 33,000 tokens).
 
 **Run the CLI Client:**
-
 ```bash
 uv run python src/cli_client/main.py
 ```
 
 ---
 
-## Capabilities & Available Tools
+## Tool Capabilities
 
-This assistant is a terse, numbers-first sports performance coach. It has access to a wide array of tools to fetch activities, analyze streams, review segments, and more.
+The assistant is equipped with the following toolsets:
 
-### Tool Categories
-- **Authentication**: `login`
-- **Athlete Data**: `get_athlete_profile`, `get_athlete_stats`, `get_athlete_zones`, `get_athlete_clubs`, `get_gear_detail`
-- **Activities**: `list_activities`, `get_activity_detail`, `get_activity_details_batch`, `get_activity_laps`, `get_activity_zones`
-- **Telemetry Streams**: `get_pace_profile`, `get_hr_profile`, `get_power_profile`, `get_gps_track`, `get_raw_streams`, `analyse_distance_segment`
-- **Segments**: `get_starred_segments`, `get_segment`, `get_segment_efforts`, `explore_segments`, `star_segment`, `get_segment_effort_streams`
-
-### Known Limitations (Work In Progress)
-
-- **Telemetry Streams**: If you don't want to burn your tokens, **avoid using telemetry streams based tools**. It is too unrestricted and currently a work in progress. We are actively trying to understand return formats and create better context to get the best data possible with the minimum amount of tokens, maximizing outputs so the CLI feels like an actual coach. It will work much better later.
-
-### Example Prompts
-
-You can ask the coach complex, analytical questions about your training data:
-
-- **"Show me my pace details for the longest run I have made."**
-- **"Explain run splits for longest run, where could I have improved."**
-- "What is my actual current running level based on my Strava history?"
-- "Which activities best represent my current fitness?"
-- "What are my recent weekly mileage and consistency patterns?"
-- "Given my gym schedule and recovery limits, how many runs per week are realistic?"
+| Category | Tools | Description |
+|---|---|---|
+| **Authentication** | `login` | OAuth flow and local token negotiation. |
+| **Athlete Data** | `get_athlete_profile`, `get_athlete_stats`, `get_athlete_zones`, `get_athlete_clubs`, `get_gear_detail` | Retrieves personal records, HR/Power zones, and gear list. |
+| **Activities** | `list_activities`, `get_activity_detail`, `get_activity_details_batch`, `get_activity_laps`, `get_activity_zones` | Fetches historical lists, details, and zone distributions. |
+| **Telemetry Streams** | `get_pace_profile`, `get_hr_profile`, `get_power_profile`, `get_gps_track`, `get_raw_streams`, `analyse_distance_segment` | Returns distilled per-km telemetry for pacing, HR, and power. |
+| **Segments** | `get_starred_segments`, `get_segment`, `get_segment_efforts`, `explore_segments`, `star_segment` | Explores, stars, and analyzes efforts on specific segments. |
 
 ---
 
-## Prerequisites & Installation
+## Example Prompts & Coaching Interrogation
 
-- Python 3.11+
-- [`uv`](https://github.com/astral-sh/uv)
-- A Strava API application with:
-  - Authorization Callback Domain: `localhost`
-  - Redirect URI: `http://localhost:8000`
+You can ask the coach complex analytical questions about your training data:
+- **"Show me my pace details for the longest run I have made."**
+- **"Explain run splits for the longest run, where could I have improved?"**
+- **"What are my recent weekly mileage and consistency patterns?"**
+- **"Calculate my heart rate drift on my last threshold run and explain the aerobic efficiency impact."**
+- **"Based on my historical workout logs, what is my estimated running profile?"**
 
-Install dependencies:
+---
 
-```bash
-uv sync
-```
+## Safety and Privacy
 
-## Safety And Privacy
+- **Git Discipline**: The `.env` file and `.strava_token.json` contain sensitive API keys and access tokens. They are listed in `.gitignore` and should never be committed.
+- **Credential Safety**: The MCP server never exposes raw OAuth tokens (`access_token`, `refresh_token`) to the LLM. All tokens are kept strictly server-side.
+- **Local Isolation**: All calculations and distillation steps are processed locally inside your environment.
 
-- Keep `.env` and `.strava_token.json` out of Git.
-- Rotate credentials immediately if leaked.
-- The server avoids returning raw `access_token` and `refresh_token` values to the AI model. Tokens are stored locally for API access only.
+---
+
+## Future Roadmap
+
+The future expansion of Strava MCP focuses on enhancing client-side execution boundaries, caching efficiency, and telemetry analytics:
+
+1. **Smart Cache Layer**: Implement a local SQLite caching system for token-heavy telemetry profiles to avoid making redundant Strava API requests for unchanged activities.
+2. **Client-Side Token Budgeting**: Introduce dynamic thresholds in the Orchestrator layer that automatically switch distillation modes (e.g. summarizing further or truncating details) when hitting context bounds.
+3. **Advanced Biometric Calculations**:
+   - Compute normalized power curves and heart rate drift indexes dynamically inside the distillation engine.
+   - Detect training overload signals by calculating acute-to-chronic workload ratios (ACWR) using rolling weekly summaries.
+4. **Platform Agnostic Support**: Structure the ingestion pipeline to allow import of raw FIT or GPX files directly from other fitness portals (e.g., Garmin Connect, Wahoo) alongside Strava.
+
+---
+
+## Contributing
+
+Contributions are welcome! Please follow these guidelines:
+1. Fork the repository and create your branch: `git checkout -b feature/amazing-feature`.
+2. Ensure your changes compile and pass code formatting linting rules.
+3. Submit a pull request detailing the changes and performance impacts.
+
+---
+
+## License
+
+Distributed under the MIT License. See `LICENSE` for more information.

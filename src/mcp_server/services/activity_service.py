@@ -20,6 +20,7 @@ import time
 from typing import Any
 
 from mcp_server.api import endpoints, get
+from mcp_server.distillation import activity as distill
 from mcp_server.models.enums import SortField, SortOrder, SportType
 from mcp_server.models.responses import DetailedActivity, Lap, SplitMetric, SummaryActivity
 
@@ -166,7 +167,7 @@ def list_activities(
     sort_attr = sort_by.value
     activities.sort(key=lambda a: getattr(a, sort_attr) or 0, reverse=reverse)
 
-    return [_serialize_summary(a) for a in activities]
+    return distill.distill_summaries([_serialize_summary(a) for a in activities])
 
 
 # ---------------------------------------------------------------------------
@@ -184,7 +185,7 @@ def get_detail(
         params={"include_all_efforts": str(include_all_efforts).lower()},
     )
     activity = DetailedActivity.model_validate(raw)
-    return _serialize_detail(activity)
+    return distill.distill_detail(_serialize_detail(activity))
 
 
 def get_multiple_details(
@@ -202,7 +203,7 @@ def get_multiple_details(
 def get_laps(activity_id: int) -> list[dict[str, Any]]:
     """Fetch laps and enrich each with derived pace."""
     raw: list[dict[str, Any]] = get(endpoints.activity_laps(activity_id))
-    return [_serialize_lap(Lap.model_validate(lap)) for lap in raw]
+    return distill.distill_laps([_serialize_lap(Lap.model_validate(lap)) for lap in raw])
 
 
 # ---------------------------------------------------------------------------
@@ -211,7 +212,7 @@ def get_laps(activity_id: int) -> list[dict[str, Any]]:
 
 def get_zones(activity_id: int) -> list[dict[str, Any]]:
     """Fetch HR / power zone distribution (Summit feature)."""
-    return get(endpoints.activity_zones(activity_id))
+    return distill.distill_zones(get(endpoints.activity_zones(activity_id)))
 
 
 # ---------------------------------------------------------------------------

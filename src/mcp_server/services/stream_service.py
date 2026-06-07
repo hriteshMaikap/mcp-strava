@@ -1,15 +1,17 @@
 """Stream service.
 
-Bridges abstract analytics requests to the Strava streams API.
+Bridges abstract analytics requests to the Strava streams API,
+with distillation applied to compress per-second arrays into
+per-km statistical summaries.
 
-Parameter routing:
-  NATIVE TO API   : activity_id, keys (the stream type list), key_by_type
-  ABSTRACT (ours) : distance_marker_m (segment start), analysis presets
-
-The LLM never needs to know internal stream key names for common use cases —
-it calls named analysis functions (get_pace_profile, get_hr_profile, etc.)
-and the service chooses the right keys internally.  For advanced use, the
-raw get_streams function accepts explicit key names.
+Architecture:
+    _fetch_streams()     — raw API call (internal only)
+    get_pace_profile()   — distilled per-km pace analysis
+    get_hr_profile()     — distilled per-km HR + drift analysis
+    get_power_profile()  — distilled per-km power + normalised power
+    get_gps_track()      — distilled bounding box + elevation
+    get_streams()        — distilled generic aggregation (for get_raw_streams tool)
+    analyse_*            — derived analytics (uses raw streams internally)
 """
 
 from __future__ import annotations
@@ -17,6 +19,7 @@ from __future__ import annotations
 from typing import Any
 
 from mcp_server.api import endpoints, get
+from mcp_server.distillation import streams as distill
 from mcp_server.models.enums import StreamKey
 
 
@@ -40,23 +43,20 @@ _KEYS_ALL   = list(StreamKey)
 
 
 # ---------------------------------------------------------------------------
-# Core fetch (native API params fully exposed)
+# Internal raw fetch (NOT exposed to tools — used by analyse_* functions)
 # ---------------------------------------------------------------------------
 
-def get_streams(
+def _fetch_streams(
     activity_id: int,
     keys: list[StreamKey],
 ) -> dict[str, Any]:
-    """
-    Fetch the requested stream types for an activity.
-
-    Native params forwarded:
-      activity_id — Strava activity ID
-      keys        — comma-joined stream keys sent as the `keys` query param
-      key_by_type — always True; response is keyed by stream type
+    """Fetch raw stream data from Strava API.
 
     Returns a dict keyed by stream type name, each value being:
       {data: [...], original_size: N, resolution: "high", series_type: "distance"}
+
+    This is the ONLY function that touches the API. All other functions
+    in this module either distill or compute derived analytics from this output.
     """
     key_str = ",".join(k.value for k in keys)
     raw = get(
@@ -70,43 +70,68 @@ def get_streams(
 
 
 # ---------------------------------------------------------------------------
-# Named analysis functions (abstract — tools call these)
+# Distilled analysis functions (tools call these)
 # ---------------------------------------------------------------------------
 
 def get_pace_profile(activity_id: int) -> dict[str, Any]:
+    """Fetch and distill pace streams into per-km analysis.
+
+    Raw: ~57,000 tokens (4 streams × 4,473 per-second data points)
+    Distilled: ~500 tokens (per-km splits + pacing summary)
     """
-    Fetch time, distance, smoothed velocity, and altitude streams.
-    Sufficient for: per-km pace analysis, pace charts, elevation-pace correlation.
-    """
-    return get_streams(activity_id, keys=_KEYS_PACE)
+    raw = _fetch_streams(activity_id, keys=_KEYS_PACE)
+    return distill.distill_pace_profile(raw)
 
 
 def get_hr_profile(activity_id: int) -> dict[str, Any]:
+    """Fetch and distill HR streams into per-km + drift analysis.
+
+    Raw: ~42,000 tokens
+    Distilled: ~300 tokens (per-km HR + drift + efficiency)
     """
-    Fetch time, distance, heart rate, and velocity streams.
-    Sufficient for: HR-zone breakdowns, aerobic drift detection, HR-pace scatter.
-    """
-    return get_streams(activity_id, keys=_KEYS_HR)
+    raw = _fetch_streams(activity_id, keys=_KEYS_HR)
+    return distill.distill_hr_profile(raw)
 
 
 def get_power_profile(activity_id: int) -> dict[str, Any]:
+    """Fetch and distill power streams into per-km + normalised power.
+
+    Raw: ~42,000 tokens
+    Distilled: ~300 tokens (per-km power + cadence + NP)
     """
-    Fetch time, distance, watts, cadence, and velocity streams.
-    Sufficient for: power curves, normalised power, cadence-power charts.
-    """
-    return get_streams(activity_id, keys=_KEYS_POWER)
+    raw = _fetch_streams(activity_id, keys=_KEYS_POWER)
+    return distill.distill_power_profile(raw)
 
 
 def get_gps_track(activity_id: int) -> dict[str, Any]:
+    """Fetch and distill GPS streams into bounding box + elevation.
+
+    Raw: ~90,000 tokens (4,473 lat/lng pairs + distance + altitude)
+    Distilled: ~150 tokens (bounding box, start/end, elevation summary)
     """
-    Fetch lat/lng, distance, and altitude streams.
-    Sufficient for: map rendering, route replay, elevation profiles.
+    raw = _fetch_streams(activity_id, keys=_KEYS_GPS)
+    return distill.distill_gps_track(raw)
+
+
+def get_streams(
+    activity_id: int,
+    keys: list[StreamKey],
+) -> dict[str, Any]:
+    """Fetch and distill arbitrary streams (for get_raw_streams tool).
+
+    Applies per-km aggregation for all requested stream types.
+
+    Raw: up to ~143,000 tokens for all keys
+    Distilled: ~800 tokens (per-km aggregates for all streams)
     """
-    return get_streams(activity_id, keys=_KEYS_GPS)
+    raw = _fetch_streams(activity_id, keys=keys)
+    return distill.distill_raw_streams(raw)
 
 
 # ---------------------------------------------------------------------------
-# Derived analytics (abstract computation over streams)
+# Derived analytics (abstract computation over raw streams)
+# These use _fetch_streams internally because they need per-second
+# resolution to compute precise segment slices.
 # ---------------------------------------------------------------------------
 
 def analyse_distance_segment(
@@ -114,25 +139,15 @@ def analyse_distance_segment(
     start_m: float = 0.0,
     end_m: float = 1000.0,
 ) -> dict[str, Any]:
-    """
-    Compute pace, HR, and elevation stats for an arbitrary distance segment.
+    """Compute pace, HR, and elevation stats for an arbitrary distance segment.
 
-    Abstract params (not native to Strava):
-      start_m — distance into activity where the segment begins (metres)
-      end_m   — distance into activity where the segment ends (metres)
-
-    Examples:
-      First km:   start_m=0,    end_m=1000
-      5–10 km:    start_m=5000, end_m=10000
-      Last 2 km:  pass end_m=activity total distance, start_m=total-2000
-
-    Returns:
-      elapsed_time_s, pace_min_per_km, avg_hr (if available),
-      elevation_gain, avg_velocity_ms, start_m, end_m
+    This function needs raw per-second data for precise slicing — it
+    calls _fetch_streams directly and returns an already-compact result
+    (~65 tokens). No further distillation needed.
     """
     # Fetch both pace and HR keys in one call to avoid two round-trips
     all_keys = list(dict.fromkeys(_KEYS_PACE + _KEYS_HR))  # deduplicated, order-preserving
-    streams = get_streams(activity_id, keys=all_keys)
+    streams = _fetch_streams(activity_id, keys=all_keys)
 
     distance_data: list[float] = streams.get("distance", {}).get("data", [])
     time_data:     list[int]   = streams.get("time",     {}).get("data", [])
@@ -200,11 +215,10 @@ def analyse_segment_effort_streams(
     effort_id: int,
     keys: list[StreamKey] | None = None,
 ) -> dict[str, Any]:
-    """
-    Fetch streams for a specific segment effort.
+    """Fetch and distill streams for a specific segment effort.
 
-    Native param: effort_id (Strava segment effort ID)
-    Abstract:     keys defaults to pace preset if omitted
+    Uses the distilled raw streams pipeline since segment efforts
+    can contain significant data.
     """
     requested = keys or _KEYS_PACE
     key_str = ",".join(k.value for k in requested)
@@ -213,5 +227,5 @@ def analyse_segment_effort_streams(
         params={"keys": key_str, "key_by_type": "true"},
     )
     if isinstance(raw, list):
-        return {item["type"]: item for item in raw}
-    return raw
+        raw = {item["type"]: item for item in raw}
+    return distill.distill_raw_streams(raw)
